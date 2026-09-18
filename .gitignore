@@ -1,0 +1,11 @@
+# 실행할 때 생기는 기록 파일
+설정-기록.txt
+claude-설정-기록.txt
+
+# settings.json 백업본
+*.bak
+*.bak-*
+
+# 윈도우 잡파일
+Thumbs.db
+desktop.ini
