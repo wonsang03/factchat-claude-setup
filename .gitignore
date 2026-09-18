@@ -9,3 +9,6 @@ claude-설정-기록.txt
 # 윈도우 잡파일
 Thumbs.db
 desktop.ini
+
+# 배포용 압축 파일 (GitHub 의 Download ZIP 을 쓰면 되므로 올리지 않음)
+*.zip
