@@ -33,9 +33,21 @@ function Stop-Here ($msg) {
     exit 1
 }
 
+# 어떤 객체에 그 속성이 있는지 확인.
+# $obj.PSObject.Properties.Name 을 쓰면 속성이 하나도 없는 객체에서
+# 엄격 모드(Set-StrictMode)일 때 오류가 나므로 하나씩 훑는 방식으로 확인한다.
+function Has-Prop ($obj, $name) {
+    if ($null -eq $obj) { return $false }
+    $props = $obj.PSObject.Properties
+    if ($null -eq $props) { return $false }
+    foreach ($p in $props) { if ($p.Name -eq $name) { return $true } }
+    return $false
+}
+
 function Set-Prop ($obj, $name, $value) {
-    if ($obj.PSObject.Properties.Name -contains $name) { $obj.$name = $value }
-    else { $obj | Add-Member -NotePropertyName $name -NotePropertyValue $value }
+    if ($null -eq $obj) { return }
+    if (Has-Prop $obj $name) { $obj.$name = $value }
+    else { Add-Member -InputObject $obj -NotePropertyName $name -NotePropertyValue $value -Force }
 }
 
 function Read-DotEnv ($path) {
@@ -440,11 +452,16 @@ if (Test-Path $ClaudeExe) {
     if (-not (Yes '지금 설치할까요?')) { Stop-Here '설치를 건너뛰어 더 진행할 수 없습니다.' }
     try {
         $installer = Invoke-RestMethod -Uri 'https://claude.ai/install.ps1' -TimeoutSec 60
-        Invoke-Expression $installer
+        # & { } 로 감싸 별도 스코프에서 실행 -> 설치 스크립트가 바꾼 설정이 밖으로 새지 않음
+        & { Invoke-Expression $script:installer }
     } catch {
         Fail ('설치 중 오류: ' + $_.Exception.Message)
         Stop-Here 'PowerShell 을 새로 열고 다시 시도하거나, 담당 교수에게 문의하세요.'
     }
+    # 혹시라도 설치 스크립트의 설정이 새어 나왔을 경우를 대비해 원래대로 되돌림
+    Set-StrictMode -Off
+    $ErrorActionPreference = 'Stop'
+
     if (Test-Path $ClaudeExe) {
         Step '설치 결과'
         Ok $ClaudeExe
@@ -566,7 +583,7 @@ for ($sTry = 1; $sTry -le 3; $sTry++) {
         }
         if ($null -eq $settings) { $settings = [pscustomobject]@{} }
 
-        if (($settings.PSObject.Properties.Name -contains 'env') -and $settings.env) { $envObj = $settings.env }
+        if ((Has-Prop $settings 'env') -and $settings.env) { $envObj = $settings.env }
         else { $envObj = [pscustomobject]@{} }
 
         Set-Prop $envObj 'ANTHROPIC_BASE_URL'   $baseUrl
@@ -577,8 +594,15 @@ for ($sTry = 1; $sTry -le 3; $sTry++) {
         $json = $settings | ConvertTo-Json -Depth 20
         [System.IO.File]::WriteAllText($path, $json, (New-Object System.Text.UTF8Encoding($false)))
 
-        $check = (Get-Content $path -Raw -Encoding UTF8 | ConvertFrom-Json).env
-        if ($check.ANTHROPIC_BASE_URL -ne $baseUrl -or $check.ANTHROPIC_AUTH_TOKEN -ne $key -or $check.ANTHROPIC_MODEL -ne $model) {
+        $back  = Get-Content $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $check = $null
+        if (Has-Prop $back 'env') { $check = $back.env }
+        if (-not (Has-Prop $check 'ANTHROPIC_BASE_URL') -or
+            -not (Has-Prop $check 'ANTHROPIC_AUTH_TOKEN') -or
+            -not (Has-Prop $check 'ANTHROPIC_MODEL') -or
+            $check.ANTHROPIC_BASE_URL -ne $baseUrl -or
+            $check.ANTHROPIC_AUTH_TOKEN -ne $key -or
+            $check.ANTHROPIC_MODEL -ne $model) {
             throw '저장한 값이 다시 읽은 값과 다릅니다 (저장 도중 다른 프로그램이 파일을 건드린 것 같습니다)'
         }
 
@@ -631,7 +655,7 @@ foreach ($mode in @('bearer', 'apikey')) {
             break
         } catch {
             $code = $null
-            if ($_.Exception.Response) { try { $code = [int]$_.Exception.Response.StatusCode } catch {} }
+            try { if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode } } catch {}
             if ($code) { $lastErr = 'HTTP ' + $code } else { $lastErr = $_.Exception.Message }
             # 키가 틀렸거나 주소가 틀린 것은 다시 해도 같으므로 바로 넘어감
             if ($code -eq 400 -or $code -eq 401 -or $code -eq 403 -or $code -eq 404) { break }
